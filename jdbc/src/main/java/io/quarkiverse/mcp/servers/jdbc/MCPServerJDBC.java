@@ -2,7 +2,6 @@ package io.quarkiverse.mcp.servers.jdbc;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -13,11 +12,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import jakarta.annotation.PreDestroy;
 import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 
 import io.quarkiverse.mcp.server.McpLog;
 import io.quarkiverse.mcp.server.Prompt;
@@ -42,8 +44,32 @@ public class MCPServerJDBC {
     @ConfigProperty(name = "jdbc.password")
     Optional<String> jdbcPassword;
 
+    private volatile HikariDataSource dataSource;
+
+    private synchronized HikariDataSource getDataSource() {
+        if (dataSource == null) {
+            HikariConfig config = new HikariConfig();
+            config.setJdbcUrl(jdbcUrl);
+            jdbcUser.ifPresent(config::setUsername);
+            jdbcPassword.ifPresent(config::setPassword);
+            config.setMaximumPoolSize(5);
+            config.setMinimumIdle(1);
+            config.setIdleTimeout(300_000);
+            config.setConnectionTimeout(30_000);
+            dataSource = new HikariDataSource(config);
+        }
+        return dataSource;
+    }
+
     private Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(jdbcUrl, jdbcUser.orElse(null), jdbcPassword.orElse(null));
+        return getDataSource().getConnection();
+    }
+
+    @PreDestroy
+    void shutdown() {
+        if (dataSource != null) {
+            dataSource.close();
+        }
     }
 
     @Tool(description = "Execute a SELECT query on the jdbc database")
